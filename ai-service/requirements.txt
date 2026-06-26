@@ -10,3 +10,4 @@ google-cloud-aiplatform
 openpyxl
 pypdf
 python-multipart
+google-generativeai

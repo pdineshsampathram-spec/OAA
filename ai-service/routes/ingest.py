@@ -229,17 +229,28 @@ async def ingest_transcript(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="No readable text found in PDF transcript.")
 
         try:
-            # Call Gemini API via Vertex AI GenerativeModel
-            import vertexai
-            from vertexai.generative_models import GenerativeModel
+            # Check if Google AI Studio Gemini API Key is provided
+            gemini_api_key = os.environ.get("GEMINI_API_KEY")
             
-            project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or "gen-lang-client-0632178408"
-            location = os.environ.get("GOOGLE_CLOUD_LOCATION") or "us-central1"
-            
-            vertexai.init(project=project_id, location=location)
-            
-            # Use gemini-1.5-flash for structured extraction
-            model = GenerativeModel("gemini-1.5-flash")
+            if gemini_api_key:
+                import google.generativeai as genai
+                genai.configure(api_key=gemini_api_key)
+                # Use gemini-1.5-flash for structured extraction
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                print("Using Google AI Studio Gemini API for transcript parsing.")
+            else:
+                # Call Gemini API via Vertex AI GenerativeModel (Google Cloud)
+                import vertexai
+                from vertexai.generative_models import GenerativeModel
+                
+                project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or "gen-lang-client-0632178408"
+                location = os.environ.get("GOOGLE_CLOUD_LOCATION") or "us-central1"
+                
+                vertexai.init(project=project_id, location=location)
+                
+                # Use gemini-1.5-flash for structured extraction
+                model = GenerativeModel("gemini-1.5-flash")
+                print("Using Google Cloud Vertex AI Gemini API for transcript parsing.")
             
             prompt = f"""
             You are an AI assistant that extracts structured academic data from student transcript PDFs.
