@@ -217,11 +217,13 @@ export async function POST(request: Request) {
 
     // ─── STEP 3: Fallback engine (must never crash) ───────────────────────
     if (source === "fallback") {
-      riskScore = 0;
+      // Calculate a realistic baseline risk score based on average marks and attendance rate
+      const baseline = 1.0 - (0.6 * (avgMarks / 100) + 0.4 * attendanceRate);
+      riskScore = Math.max(0, Math.min(100, Math.round(baseline * 100)));
 
       // Condition 1: Low academic performance
       if (avgMarks < 40) {
-        riskScore += 35;
+        riskScore = Math.max(riskScore, 65); // Ensure high risk level
         recommendations.push(
           `Academic performance critically low (${Math.round(avgMarks)}%). Schedule immediate remedial sessions${weakSubjectNames.length > 0 ? ` in ${weakSubjectNames.join(", ")}` : ""}.`
         );
@@ -229,7 +231,7 @@ export async function POST(request: Request) {
 
       // Condition 2: Poor attendance
       if (attendanceRate < 0.6) {
-        riskScore += 30;
+        riskScore = Math.max(riskScore, 60); // Ensure medium-high risk level
         recommendations.push(
           `Attendance rate at ${Math.round(attendanceRate * 100)}% — risk of exam ineligibility. Contact guardian immediately.`
         );
@@ -237,7 +239,7 @@ export async function POST(request: Request) {
 
       // Condition 3: Declining performance trend
       if (marksTrend < -5) {
-        riskScore += 15;
+        riskScore = Math.min(100, riskScore + 10);
         recommendations.push(
           `Performance declining by ${Math.round(Math.abs(marksTrend))} points. Schedule teacher-student meeting to identify causes.`
         );
@@ -245,13 +247,13 @@ export async function POST(request: Request) {
 
       // Condition 4: Multiple weak subjects
       if (weakSubjectsCount >= 3) {
-        riskScore += 20;
+        riskScore = Math.min(100, riskScore + 15);
         recommendations.push(
           `Struggling in ${weakSubjectsCount} subjects. Assign peer tutoring or after-school support.`
         );
       }
 
-      // Cap at 100
+      // Cap at 100 and evaluate risk flag
       riskScore = Math.min(100, riskScore);
       riskFlag = riskScore >= 50 ? 1 : 0;
 

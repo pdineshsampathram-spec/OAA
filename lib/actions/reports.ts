@@ -112,7 +112,7 @@ export async function getClassReportAction(className: string): Promise<{ success
         name: student.name,
         avgMarks: avg,
         attendanceRate: attRate,
-        riskScore: pred ? pred.score : (avg < 40 || attRate < 0.75 ? 0.75 : 0.15),
+        riskScore: pred ? (pred.score > 1 ? pred.score / 100 : pred.score) : (avg < 40 || attRate < 0.75 ? 0.75 : 0.15),
         riskFlag: pred ? pred.riskFlag === 1 : (avg < 40 || attRate < 0.75),
         oaaScore: oaaInfo ? oaaInfo.totalOaaScore : 0,
         redDotCount,
@@ -335,7 +335,8 @@ export async function getStudentReportAction(studentId: string): Promise<{ succe
     // AI prediction mapping
     let aiInsights = null;
     if (prediction) {
-      const score = prediction.score;
+      const rawScore = prediction.score;
+      const score = rawScore > 1 ? rawScore / 100 : rawScore;
       let riskLevel: "High" | "Medium" | "Low" = "Low";
       if (score >= 0.70) riskLevel = "High";
       else if (score >= 0.35) riskLevel = "Medium";

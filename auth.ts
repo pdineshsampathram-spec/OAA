@@ -1,20 +1,14 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import Google from "next-auth/providers/google";
 import { authConfig } from "./auth.config";
 import { db } from "@/lib/db";
-import { users, students, oaaScores } from "@/lib/db/schema";
+import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
-import { generateId } from "@/lib/utils";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   providers: [
-    Google({
-      clientId: process.env.AUTH_GOOGLE_ID || "",
-      clientSecret: process.env.AUTH_GOOGLE_SECRET || "",
-    }),
     Credentials({
       name: "credentials",
       credentials: {
@@ -65,69 +59,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    async signIn({ user, account }) {
-      if (account?.provider === "google") {
-        if (!user.email) return false;
-
-        try {
-          // Check if user exists in database
-          const existingUser = await db
-            .select()
-            .from(users)
-            .where(eq(users.email, user.email))
-            .limit(1);
-
-          if (existingUser.length === 0) {
-            // User does not exist, automatically onboard as student
-            const userId = generateId();
-            const studentId = `student_${generateId()}`;
-            const dummyHash = bcrypt.hashSync("google-auth-placeholder-" + Math.random(), 10);
-            const schoolId = "school_1"; // default school
-
-            // 1. Insert into students table
-            await db.insert(students).values({
-              id: studentId,
-              name: user.name || "Google User",
-              class: "10",
-              section: "A",
-              gender: "Other",
-              schoolId,
-            });
-
-            // 2. Insert into users table
-            await db.insert(users).values({
-              id: userId,
-              name: user.name || "Google User",
-              email: user.email,
-              passwordHash: dummyHash,
-              role: "student",
-              schoolId,
-              studentId,
-            });
-
-            // 3. Initialize default OAA score record
-            await db.insert(oaaScores).values({
-              id: `oaa_${generateId()}`,
-              studentId,
-              academicScore: 0,
-              skillsScore: 0,
-              projectScore: 0,
-              behaviorScore: 10,
-              totalOaaScore: 10,
-              classPotentialContribution: 0,
-              percentileRank: 0,
-            });
-
-            console.log(`Created new student user via Google login: ${user.email}`);
-          }
-          return true;
-        } catch (error) {
-          console.error("Error during Google sign-in user creation:", error);
-          return false;
-        }
-      }
-      return true;
-    },
     async jwt({ token, user, trigger, session }) {
       if (user) {
         // Query user info from database using email

@@ -54,6 +54,7 @@ export default function AIInsightsPage({ initialPredictions, students }: AIInsig
   const [isRunning, setIsRunning] = useState(false);
   const [progressIndex, setProgressIndex] = useState(0);
   const [currentRunningName, setCurrentRunningName] = useState("");
+  const [currentPhase, setCurrentPhase] = useState("Initializing analyzer...");
   
   // Toast notifications
   const [toast, setToast] = useState<{ open: boolean; variant: "success" | "error" | "info"; description: string } | null>(null);
@@ -65,9 +66,10 @@ export default function AIInsightsPage({ initialPredictions, students }: AIInsig
   // Classify risk levels
   const classifiedPredictions = useMemo(() => {
     return predictions.map((p) => {
+      const normalizedScore = p.score > 1 ? p.score / 100 : p.score;
       let riskLevel: "High" | "Medium" | "Low" = "Low";
-      if (p.score >= 0.70) riskLevel = "High";
-      else if (p.score >= 0.35) riskLevel = "Medium";
+      if (normalizedScore >= 0.70) riskLevel = "High";
+      else if (normalizedScore >= 0.35) riskLevel = "Medium";
       
       let parsedSuggestions: string[] = [];
       try {
@@ -127,12 +129,33 @@ export default function AIInsightsPage({ initialPredictions, students }: AIInsig
       setProgressIndex(i);
       setCurrentRunningName(student.name);
 
+      const phases = [
+        "Accessing academic records...",
+        "Evaluating attendance margins...",
+        "Checking absent streaks...",
+        "Running AI classification model...",
+        "Structuring personalized action items..."
+      ];
+
+      // Simulate high-speed AI telemetry phases
+      let phaseIdx = 0;
+      setCurrentPhase(phases[0]);
+      const phaseInterval = setInterval(() => {
+        phaseIdx++;
+        if (phaseIdx < phases.length) {
+          setCurrentPhase(phases[phaseIdx]);
+        }
+      }, 70);
+
       try {
         const response = await fetch("/api/ai/predict", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ studentId: student.id }),
         });
+
+        clearInterval(phaseInterval);
+        setCurrentPhase("Persisted prediction successfully.");
 
         if (response.ok) {
           const result = await response.json();
@@ -164,6 +187,8 @@ export default function AIInsightsPage({ initialPredictions, students }: AIInsig
           }
         }
       } catch (err) {
+        clearInterval(phaseInterval);
+        setCurrentPhase("Prediction failed.");
         console.error(`AI evaluation failed for ${student.name}:`, err);
       }
 
@@ -218,31 +243,81 @@ export default function AIInsightsPage({ initialPredictions, students }: AIInsig
             </button>
           </div>
 
-          {/* Sequential Evaluation Progress Bar */}
+          {/* Premium Immersive Evaluation Loader Overlay */}
           <AnimatePresence>
             {isRunning && (
               <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                className="mt-6 pt-5 border-t border-indigo-900/50 space-y-2.5"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md"
               >
-                <div className="flex justify-between items-center text-xs font-semibold text-indigo-200">
-                  <span className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse" />
-                    Evaluating: <strong className="text-white">{currentRunningName}</strong>
-                  </span>
-                  <span>{progressIndex + 1} of {students.length} Students</span>
-                </div>
-                {/* Progress bar container */}
-                <div className="h-2.5 bg-slate-950/80 rounded-full overflow-hidden border border-slate-900 shadow-inner">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${progressPercent}%` }}
-                    transition={{ ease: "easeInOut" }}
-                    className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]"
-                  />
-                </div>
+                <motion.div
+                  initial={{ scale: 0.95, y: 20 }}
+                  animate={{ scale: 1, y: 0 }}
+                  exit={{ scale: 0.95, y: 20 }}
+                  transition={{ type: "spring", duration: 0.5 }}
+                  className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl relative overflow-hidden text-center"
+                >
+                  {/* Background soft radial glow */}
+                  <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+                  
+                  {/* Pulsing and Rotating Core Scanning Element */}
+                  <div className="relative flex justify-center mb-8">
+                    {/* Ring ripples */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="w-24 h-24 rounded-full border border-indigo-500/25 animate-ping absolute" />
+                      <div className="w-32 h-32 rounded-full border border-violet-500/15 animate-pulse absolute" />
+                    </div>
+                    
+                    {/* Glowing active core */}
+                    <div className="relative w-20 h-20 bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                      <Brain className="w-10 h-10 text-white animate-pulse" />
+                    </div>
+                  </div>
+
+                  {/* Analyzer Title */}
+                  <h3 className="text-xl font-bold text-white mb-2 tracking-tight">AI Risk Diagnostics Running</h3>
+                  <p className="text-indigo-200/60 text-xs max-w-sm mx-auto mb-6 leading-relaxed">
+                    Executing random forest inference pipelines across multi-layered student academic and attendance data models.
+                  </p>
+
+                  {/* Progress Telemetry Console */}
+                  <div className="bg-slate-950/80 border border-slate-800/80 rounded-2xl p-5 mb-6 text-left space-y-4 shadow-inner">
+                    <div className="flex justify-between items-center text-xs font-semibold text-indigo-300">
+                      <span className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-violet-400 animate-ping" />
+                        Student: <strong className="text-white">{currentRunningName}</strong>
+                      </span>
+                      <span className="text-indigo-400/80">{progressIndex + 1} of {students.length}</span>
+                    </div>
+
+                    {/* Progress slider bar */}
+                    <div className="h-2 bg-slate-900 rounded-full overflow-hidden border border-slate-800/50">
+                      <motion.div
+                        className="h-full bg-gradient-to-r from-indigo-500 via-violet-500 to-indigo-600 shadow-[0_0_8px_rgba(99,102,241,0.5)]"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${progressPercent}%` }}
+                        transition={{ duration: 0.2 }}
+                      />
+                    </div>
+
+                    {/* Live Scrolling Console Feed */}
+                    <div className="font-mono text-2xs space-y-1.5 text-indigo-400 bg-slate-950 p-3 rounded-lg border border-slate-900/60 h-24 overflow-hidden flex flex-col justify-end select-none">
+                      <div className="opacity-40 select-none">
+                        {progressIndex > 0 ? `✓ Completed: ${students[progressIndex - 1]?.name || ""}` : "System status: Ready"}
+                      </div>
+                      <div className="text-indigo-300 animate-pulse flex items-center gap-1.5">
+                        <span className="text-indigo-500">&gt;</span> {currentPhase}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Batch Completion Percentage */}
+                  <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    Batch Completion: {Math.round(progressPercent)}%
+                  </div>
+                </motion.div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -325,7 +400,8 @@ export default function AIInsightsPage({ initialPredictions, students }: AIInsig
                 className="min-w-[800px]"
               >
                 {filteredPredictions.map((pred) => {
-                  const rScorePct = Math.round(pred.score * 100);
+                  const pScore = pred.score > 1 ? pred.score / 100 : pred.score;
+                  const rScorePct = Math.round(pScore * 100);
                   const isHigh = pred.riskLevel === "High";
                   const isMedium = pred.riskLevel === "Medium";
                   

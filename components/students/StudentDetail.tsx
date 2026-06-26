@@ -169,7 +169,8 @@ export default function StudentDetail({
   const lineChartData = getLineChartData();
 
   // AI Prediction parsing
-  const riskScore = prediction?.score !== undefined ? prediction.score : 0;
+  const rawRiskScore = prediction?.score !== undefined ? prediction.score : 0;
+  const riskScore = rawRiskScore > 1 ? rawRiskScore / 100 : rawRiskScore;
   const riskFlag = prediction?.riskFlag === 1;
   const suggestions: string[] = prediction?.suggestions ? JSON.parse(prediction.suggestions) : [];
 

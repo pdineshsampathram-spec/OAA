@@ -258,7 +258,7 @@ async function main() {
         id: `pred_${predIdCounter++}`,
         studentId: student.id,
         riskFlag,
-        score: Number((score * 100).toFixed(0)), // convert to 0-100 scale for UI
+        score: Number(score.toFixed(4)), // Normalized 0-1 scale
         suggestions: JSON.stringify(suggestionsList),
       });
     }

@@ -288,7 +288,9 @@ export function generateStudentPDF(data: StudentReport): void {
 
     doc.setFont("helvetica", "bold");
     doc.setTextColor(darkSlate[0], darkSlate[1], darkSlate[2]);
-    doc.text(`AI Risk Score: ${(data.aiInsights.riskScore * 100).toFixed(0)}%`, 130, attY + 21);
+    const rawScore = data.aiInsights.riskScore;
+    const normScore = rawScore > 1 ? rawScore / 100 : rawScore;
+    doc.text(`AI Risk Score: ${(normScore * 100).toFixed(0)}%`, 130, attY + 21);
 
     // Bullet points for suggestions
     doc.setFont("helvetica", "normal");

@@ -495,23 +495,29 @@ export default function StudentDashboardView({
 
           <div className="flex flex-col md:flex-row gap-8 items-start">
             {/* Risk Flag Progress */}
-            <div className="shrink-0 w-full md:w-48 text-center space-y-2 border-r border-black/5 dark:border-zinc-800 pr-0 md:pr-8">
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">AI Risk Score</span>
-              <div className="text-5xl font-black text-slate-800 dark:text-white">
-                {prediction.score.toFixed(0)}%
-              </div>
-              <div className="pt-2">
-                {prediction.riskFlag === 1 ? (
-                  <span className="px-3 py-1 rounded-full bg-rose-100 text-rose-700 font-bold text-xs animate-pulse">
-                    High Academic Risk
-                  </span>
-                ) : (
-                  <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 font-bold text-xs">
-                    Low Risk (All Clear)
-                  </span>
-                )}
-              </div>
-            </div>
+            {(() => {
+              const scoreVal = prediction.score > 1 ? prediction.score / 100 : prediction.score;
+              const scorePct = Math.round(scoreVal * 100);
+              return (
+                <div className="shrink-0 w-full md:w-48 text-center space-y-2 border-r border-black/5 dark:border-zinc-800 pr-0 md:pr-8">
+                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">AI Risk Score</span>
+                  <div className="text-5xl font-black text-slate-800 dark:text-white">
+                    {scorePct}%
+                  </div>
+                  <div className="pt-2">
+                    {prediction.riskFlag === 1 ? (
+                      <span className="px-3 py-1 rounded-full bg-rose-100 text-rose-700 font-bold text-xs animate-pulse">
+                        High Academic Risk
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 font-bold text-xs">
+                        Low Risk (All Clear)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Recommendations List */}
             <div className="flex-1 space-y-3 w-full">
