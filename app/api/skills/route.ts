@@ -1,0 +1,45 @@
+import { NextResponse } from "next/server";
+import { getServerSession, ApiError } from "@/lib/api/auth-helper";
+import { db } from "@/lib/db";
+import { skills } from "@/lib/db/schema";
+import { generateId } from "@/lib/utils";
+import { calculateOAAScore } from "@/lib/scoring/oaaEngine";
+
+/**
+ * POST /api/skills — Add a new skill for the logged-in student
+ */
+export async function POST(request: Request) {
+  try {
+    const session = await getServerSession();
+    const studentId = session.user?.studentId;
+
+    if (!studentId) {
+      return NextResponse.json({ error: "Only students can add skills.", status: 403 }, { status: 403 });
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const { skillName, proficiencyLevel } = body;
+
+    if (!skillName || !proficiencyLevel) {
+      return NextResponse.json({ error: "skillName and proficiencyLevel are required.", status: 400 }, { status: 400 });
+    }
+
+    const newSkill = await db.insert(skills).values({
+      id: `skill_${generateId()}`,
+      studentId,
+      skillName,
+      proficiencyLevel,
+      verified: 0,
+      createdAt: new Date().toISOString(),
+    }).returning();
+
+    // Recalculate OAA score for student
+    await calculateOAAScore(studentId);
+
+    return NextResponse.json({ data: newSkill[0], error: null }, { status: 201 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Internal Server Error";
+    const status = error instanceof ApiError ? error.status : 500;
+    return NextResponse.json({ error: message, status }, { status });
+  }
+}

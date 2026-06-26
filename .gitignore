@@ -34,3 +34,22 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# SQLite local databases
+dev.db
+dev.db-journal
+dev.db-shm
+dev.db-wal
+
+# Agent & tool-specific folders
+.agent
+.firecrawl
+
+# Python virtualenvs and caches
+**/__pycache__/
+**/.venv/
+.venv/
+ai-service/.env
+*.pyc
+
+
