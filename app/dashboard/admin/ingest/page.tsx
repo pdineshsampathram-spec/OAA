@@ -93,11 +93,8 @@ export default function IngestPage() {
       }
 
       if (data.success) {
-        if (activeTab === "excel") {
-          setPreviewData(data.data);
-        } else {
-          setPreviewData([data.data]);
-        }
+        const incoming = Array.isArray(data.data) ? data.data : [data.data];
+        setPreviewData(incoming);
       } else {
         throw new Error("Invalid response status from server.");
       }
@@ -129,13 +126,20 @@ export default function IngestPage() {
       }
 
       if (data.success) {
-        setSuccessMsg(`Successfully committed ${data.count} student profiles and updated OAA ranks!`);
+        const newCount = data.newStudentsCount ?? data.count;
+        const existingCount = data.existingStudentsCount ?? 0;
+        const marksUp = data.marksUpdatedCount ?? 0;
+        const marksIns = data.marksInsertedCount ?? 0;
+        
+        setSuccessMsg(
+          `Successfully processed ${data.count} student(s) (${newCount} new, ${existingCount} matched). Applied ${marksIns} new marks, updated ${marksUp} marks, refreshed class rankings, and generated AI performance insights!`
+        );
         setPreviewData(null);
         setFile(null);
         setTimeout(() => {
           setSuccessMsg(null);
           router.push("/dashboard/admin/students");
-        }, 3000);
+        }, 4000);
       }
     } catch (err: unknown) {
       const error = err as Error;
@@ -201,7 +205,7 @@ export default function IngestPage() {
           }`}
         >
           <FileText className="w-4 h-4" />
-          Gemini PDF Transcript Parsing
+          Smart PDF Marks Ingestion
         </button>
       </div>
 
@@ -213,7 +217,7 @@ export default function IngestPage() {
           
           <div className="relative z-10 space-y-6">
             <h2 className="text-lg font-bold text-slate-800 dark:text-white">
-              {activeTab === "excel" ? "Upload Spreadsheet" : "Upload Single Transcript PDF"}
+              {activeTab === "excel" ? "Upload Spreadsheet" : "Upload Internal Marks / Transcript PDF"}
             </h2>
 
             {/* Drag & Drop Zone */}
@@ -247,7 +251,7 @@ export default function IngestPage() {
                   or click to select file from device
                 </span>
                 <span className="text-[9px] text-slate-400 dark:text-zinc-500 block mt-3 font-semibold uppercase tracking-wider">
-                  {activeTab === "excel" ? "Supports CSV, XLSX, XLS" : "Supports PDF transcripts"}
+                  {activeTab === "excel" ? "Supports CSV, XLSX, XLS" : "Supports Multi-Student Marksheets & Transcripts (.PDF)"}
                 </span>
               </label>
             </div>
@@ -279,13 +283,13 @@ export default function IngestPage() {
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span>
-                    {activeTab === "excel" ? "Mapping Columns..." : "Structured Extracting via Gemini..."}
+                    {activeTab === "excel" ? "Mapping Columns..." : "Intelligently Extracting PDF Marks..."}
                   </span>
                 </>
               ) : (
                 <>
                   <span>
-                    {activeTab === "excel" ? "Run Similarity Column Mapping" : "Parse Transcript with Gemini"}
+                    {activeTab === "excel" ? "Run Similarity Column Mapping" : "Parse Real-Time Marks with AI"}
                   </span>
                   <ArrowRight className="w-4 h-4" />
                 </>
@@ -330,10 +334,10 @@ export default function IngestPage() {
                 <div>
                   <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
                     <Sparkles className="w-5 h-5 text-indigo-500" />
-                    Preview Parsed Records
+                    Preview Parsed Records ({previewData.length} Students)
                   </h3>
                   <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider mt-1">
-                    Verify mapped academic rows before commit
+                    Verify mapped academic rows before committing to database
                   </p>
                 </div>
                 <button
@@ -344,7 +348,7 @@ export default function IngestPage() {
                   {isCommitting ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Writing to DB...</span>
+                      <span>Writing to DB & Scoring...</span>
                     </>
                   ) : (
                     <>
@@ -355,15 +359,37 @@ export default function IngestPage() {
                 </button>
               </div>
 
+              {/* Ingestion Intelligence Status Pills */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-3 bg-indigo-50/60 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/40 rounded-xl">
+                  <div className="text-[10px] uppercase font-bold text-indigo-500 tracking-wider">Identified Students</div>
+                  <div className="text-sm font-black text-indigo-900 dark:text-indigo-200 mt-0.5">
+                    {previewData.length} Records Found
+                  </div>
+                </div>
+                <div className="p-3 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl">
+                  <div className="text-[10px] uppercase font-bold text-emerald-500 tracking-wider">Live Ranking</div>
+                  <div className="text-sm font-black text-emerald-900 dark:text-emerald-200 mt-0.5">
+                    OAA Scores &amp; Percentiles
+                  </div>
+                </div>
+                <div className="p-3 bg-violet-50/60 dark:bg-violet-950/20 border border-violet-100 dark:border-violet-900/40 rounded-xl">
+                  <div className="text-[10px] uppercase font-bold text-violet-500 tracking-wider">AI Insights</div>
+                  <div className="text-sm font-black text-violet-900 dark:text-violet-200 mt-0.5">
+                    Risk &amp; Remedial Engine
+                  </div>
+                </div>
+              </div>
+
               {/* Data Table */}
-              <div className="overflow-x-auto max-h-[400px] border border-black/[0.04] dark:border-white/[0.04] rounded-2xl">
+              <div className="overflow-x-auto max-h-[440px] border border-black/[0.04] dark:border-white/[0.04] rounded-2xl">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-slate-50 dark:bg-zinc-900 border-b border-black/[0.04] dark:border-white/[0.04] font-bold text-slate-700 dark:text-zinc-300 select-none">
                       <th className="p-3">Student Name</th>
                       <th className="p-3">Class/Sec</th>
                       <th className="p-3">Email</th>
-                      <th className="p-3">Subjects Parsed</th>
+                      <th className="p-3">Subjects &amp; Marks Parsed</th>
                       {activeTab === "transcript" && <th className="p-3">Skills / Projects</th>}
                     </tr>
                   </thead>
@@ -375,19 +401,32 @@ export default function IngestPage() {
                       
                       return (
                         <tr key={idx} className="border-b border-black/[0.02] dark:border-white/[0.02] text-slate-600 dark:text-zinc-400 hover:bg-slate-50/50 dark:hover:bg-zinc-900/30">
-                          <td className="p-3 font-semibold text-slate-800 dark:text-white">{row.name}</td>
+                          <td className="p-3">
+                            <div className="font-semibold text-slate-800 dark:text-white flex items-center gap-1.5 flex-wrap">
+                              <span>{row.name}</span>
+                              {row.studentId && (
+                                <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-zinc-800 text-[10px] text-slate-600 dark:text-zinc-400 rounded font-mono font-bold">
+                                  {row.studentId}
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td className="p-3 font-bold text-slate-500">{row.class}-{row.section}</td>
                           <td className="p-3 font-medium text-slate-500">{row.email || "Auto-Generated"}</td>
-                          <td className="p-3 max-w-[200px]">
+                          <td className="p-3 max-w-[280px]">
                             <div className="flex flex-wrap gap-1">
                               {marksList.length > 0 ? (
-                                (marksList as Array<{ subject: string; marks: number }>).map((m, i) => (
-                                  <span key={i} className="px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-950/40 text-[9px] rounded font-bold text-indigo-700 dark:text-indigo-400 border border-indigo-100/50 dark:border-indigo-900/50">
-                                    {m.subject}: {m.marks}
-                                  </span>
-                                ))
+                                (marksList as Array<{ subject: string; marks: number; maxMarks?: number; max_marks?: number }>).map((m, i) => {
+                                  const maxM = m.maxMarks || m.max_marks;
+                                  return (
+                                    <span key={i} className="px-2 py-0.5 bg-indigo-50 dark:bg-indigo-950/40 text-[10px] rounded-md font-bold text-indigo-700 dark:text-indigo-400 border border-indigo-100/50 dark:border-indigo-900/50">
+                                      {m.subject}: <span className="text-indigo-950 dark:text-indigo-200">{m.marks}</span>
+                                      {maxM ? <span className="text-slate-400 text-[9px]">/{maxM}</span> : null}
+                                    </span>
+                                  );
+                                })
                               ) : (
-                                <span className="text-[10px] text-slate-400">None</span>
+                                <span className="text-[10px] text-slate-400">No marks parsed</span>
                               )}
                             </div>
                           </td>

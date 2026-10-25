@@ -56,9 +56,9 @@ export default auth((req) => {
 
   // ─── API Route Protection (return 403 JSON if unauthorized) ─────────
   if (pathname.startsWith("/api/")) {
-    /** Admin-only API routes */
+    /** Admin & faculty API routes */
     if (pathname.startsWith("/api/admin")) {
-      if (!hasRole(["admin", "principal"])) {
+      if (!hasRole(["admin", "principal", "teacher"])) {
         return NextResponse.json(
           { error: "Forbidden", code: 403 },
           { status: 403 }
@@ -102,9 +102,9 @@ export default auth((req) => {
 
   // ─── Dashboard Page Route Protection (redirect to /unauthorized) ────
   if (pathname.startsWith("/dashboard")) {
-    /** Admin dashboard pages — only admin and principal */
+    /** Admin & faculty dashboard pages — accessible to admin, principal, and teacher */
     if (pathname.startsWith("/dashboard/admin")) {
-      if (!hasRole(["admin", "principal"])) {
+      if (!hasRole(["admin", "principal", "teacher"])) {
         return NextResponse.redirect(new URL("/unauthorized", nextUrl));
       }
     }

@@ -119,106 +119,197 @@ async def ingest_excel(file: UploadFile = File(...)):
         print(f"Error parsing spreadsheet: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to parse spreadsheet: {str(e)}")
 
-def fallback_parse_transcript(text: str) -> Dict[str, Any]:
+def fallback_parse_transcript(text: str) -> List[Dict[str, Any]]:
     """
-    Fallback parser using regex to extract structure from standard transcript formats
-    if Gemini API is unavailable or billing is not enabled.
+    Intelligent fallback parser that handles both:
+    1. Multi-student tabular broadsheets / internal marks ledgers
+    2. Single or multi-page key-value transcript blocks
     """
-    data = {
+    students = []
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    
+    METADATA_KEYS = {
+        "sno", "s.no", "slno", "sl.no", "roll", "rollno", "roll no", "reg", "regno", 
+        "usn", "htno", "id", "pin", "name", "student name", "student", "candidate", 
+        "gender", "sex", "class", "section", "sec", "total", "percentage", "pct", 
+        "cgpa", "sgpa", "result", "grade", "rank", "remarks", "signature"
+    }
+
+    # 1. Try Tabular Broadsheet format
+    header_idx = -1
+    subject_cols = []
+    id_col = -1
+    name_col = -1
+
+    for idx, line in enumerate(lines[:30]):
+        tokens = [t.strip() for t in re.split(r"[|\t]+|\s{2,}", line) if t.strip()]
+        if len(tokens) >= 3:
+            cur_subs = []
+            f_id = -1
+            f_name = -1
+            for c_idx, t in enumerate(tokens):
+                t_lower = t.lower()
+                if any(k in t_lower for k in ["roll", "reg", "usn", "htno", "id", "pin"]):
+                    f_id = c_idx
+                elif "name" in t_lower:
+                    f_name = c_idx
+                elif len(t) >= 2 and len(t) <= 35 and not re.match(r"^\d+$", t) and t_lower not in METADATA_KEYS:
+                    cur_subs.append((c_idx, t.strip().title()))
+            if len(cur_subs) >= 2 and (f_name != -1 or f_id != -1):
+                header_idx = idx
+                subject_cols = cur_subs
+                id_col = f_id
+                name_col = f_name
+                break
+
+    if header_idx != -1 and subject_cols:
+        for line in lines[header_idx + 1:]:
+            if re.search(r"page \d+|total|average|mean|faculty", line, re.IGNORECASE):
+                continue
+            tokens = [t.strip() for t in re.split(r"[|\t]+|\s{2,}", line) if t.strip()]
+            if len(tokens) < 2:
+                continue
+
+            s_id = tokens[id_col] if id_col != -1 and id_col < len(tokens) else ""
+            s_name = tokens[name_col] if name_col != -1 and name_col < len(tokens) else ""
+
+            if not s_name:
+                for t in tokens:
+                    if re.match(r"^[a-zA-Z\s.]{3,35}$", t) and t.lower() not in METADATA_KEYS:
+                        s_name = t
+                        break
+
+            if not s_id:
+                for t in tokens:
+                    if re.match(r"^[0-9]{2}[A-Z0-9]{6,10}$", t, re.IGNORECASE) or re.match(r"^\d{3,6}$", t):
+                        s_id = t
+                        break
+
+            if not s_name and not s_id:
+                continue
+            if not s_name:
+                s_name = f"Student {s_id}"
+
+            marks_list = []
+            for col_idx, sub_name in subject_cols:
+                if col_idx < len(tokens):
+                    val_str = re.sub(r"[^0-9.]", "", tokens[col_idx])
+                    try:
+                        score = float(val_str)
+                        max_m = 30.0 if score <= 30 else (50.0 if score <= 50 else 100.0)
+                        marks_list.append({
+                            "subject": sub_name,
+                            "marks": score,
+                            "maxMarks": max_m,
+                            "max_marks": max_m,
+                            "examType": "midterm"
+                        })
+                    except ValueError:
+                        pass
+
+            if marks_list:
+                clean_name = re.sub(r"[^a-zA-Z0-9]", "", s_name.lower())
+                students.append({
+                    "studentId": s_id or None,
+                    "name": s_name.strip(),
+                    "email": f"{clean_name or 'student'}@demo.com",
+                    "class": "10",
+                    "section": "A",
+                    "gender": "Other",
+                    "marks": marks_list,
+                    "academicMarks": marks_list,
+                    "skills": [],
+                    "projects": []
+                })
+
+    if students:
+        return students
+
+    # 2. Try Key-Value / Block Transcript format
+    blocks = re.split(r"(?:(?=Name\s*:)|\n(?=Roll\s*No\s*:)|\n(?=--- Page \d+ ---))", text, flags=re.IGNORECASE)
+    for block in blocks:
+        if len(block.strip()) < 20:
+            continue
+        s_name = "Unknown Student"
+        s_id = ""
+        s_class = "10"
+        s_sec = "A"
+        s_gender = "Other"
+
+        nm = re.search(r"(?:Name|Student\s*Name)[\s:]+([^\n,]+)", block, re.IGNORECASE)
+        if nm:
+            s_name = nm.group(1).strip()
+        
+        im = re.search(r"(?:Roll\s*No|Reg\s*No|USN|HT\s*No|ID)[\s:]+([A-Za-z0-9\-]+)", block, re.IGNORECASE)
+        if im:
+            s_id = im.group(1).strip()
+
+        cm = re.search(r"(?:Class|Grade)[\s:]+([A-Za-z0-9]+)", block, re.IGNORECASE)
+        if cm:
+            s_class = cm.group(1).strip()
+
+        sm = re.search(r"(?:Section|Sec)[\s:]+([A-Za-z0-9]+)", block, re.IGNORECASE)
+        if sm:
+            s_sec = sm.group(1).strip()
+
+        gm = re.search(r"Gender[\s:]+([A-Za-z]+)", block, re.IGNORECASE)
+        if gm:
+            g_str = gm.group(1).lower()
+            s_gender = "Female" if g_str.startswith("f") else ("Male" if g_str.startswith("m") else "Other")
+
+        marks_list = []
+        for item, score in re.findall(r"([a-zA-Z \t&]{3,30})[\s:]+(\d+(?:\.\d+)?)(?:\s*/\s*(\d+))?", block):
+            item_clean = item.strip().title()
+            if item_clean.lower() not in METADATA_KEYS and len(item_clean) < 30:
+                try:
+                    sc = float(score)
+                    marks_list.append({
+                        "subject": item_clean,
+                        "marks": sc,
+                        "maxMarks": 100.0,
+                        "max_marks": 100.0,
+                        "examType": "midterm"
+                    })
+                except ValueError:
+                    pass
+
+        clean_name = re.sub(r"[^a-zA-Z0-9]", "", s_name.lower())
+        students.append({
+            "studentId": s_id or None,
+            "name": s_name,
+            "email": f"{clean_name or 'student'}@demo.com",
+            "class": s_class,
+            "section": s_sec,
+            "gender": s_gender,
+            "marks": marks_list,
+            "academicMarks": marks_list,
+            "skills": [],
+            "projects": []
+        })
+
+    return students or [{
         "name": "Unknown Student",
-        "email": "",
+        "email": "student@demo.com",
         "class": "10",
         "section": "A",
         "gender": "Other",
         "academicMarks": [],
+        "marks": [],
         "skills": [],
         "projects": []
-    }
-    
-    # Extract simple fields
-    name_match = re.search(r"Name:\s*([^\n]+)", text, re.IGNORECASE)
-    if name_match:
-        data["name"] = name_match.group(1).strip()
-        
-    email_match = re.search(r"Email:\s*([^\n]+)", text, re.IGNORECASE)
-    if email_match:
-        data["email"] = email_match.group(1).strip()
-    else:
-        # Generate email
-        clean_name = re.sub(r"[^a-zA-Z0-9]", "", data["name"].lower())
-        data["email"] = f"{clean_name}@demo.com"
-        
-    class_match = re.search(r"Class:\s*([^\n]+)", text, re.IGNORECASE)
-    if class_match:
-        data["class"] = class_match.group(1).strip()
-        
-    section_match = re.search(r"Section:\s*([^\n]+)", text, re.IGNORECASE)
-    if section_match:
-        data["section"] = section_match.group(1).strip()
-        
-    gender_match = re.search(r"Gender:\s*([^\n]+)", text, re.IGNORECASE)
-    if gender_match:
-        data["gender"] = gender_match.group(1).strip()
-        
-    # Extract marks
-    marks_lines = re.findall(r"([a-zA-Z \t]+):\s*(\d+)(?:\s*/\s*\d+)?", text)
-    exclude_keys = {"name", "email", "class", "section", "gender", "title", "description", "tech stack", "score", "skills", "projects", "academic marks", "student transcript"}
-    for item, score in marks_lines:
-        item_clean = item.strip()
-        if item_clean.lower() not in exclude_keys and len(item_clean) < 30:
-            try:
-                data["academicMarks"].append({
-                    "subject": item_clean,
-                    "marks": float(score),
-                    "max_marks": 100.0
-                })
-            except ValueError:
-                pass
-                
-    # Extract skills
-    skills_matches = re.findall(r"([a-zA-Z0-9 \t.+#]+)\s*\((beginner|intermediate|advanced)\)", text, re.IGNORECASE)
-    for skill_name, level in skills_matches:
-        data["skills"].append({
-            "skillName": skill_name.strip(),
-            "proficiencyLevel": level.lower().strip()
-        })
-
-        
-    # Extract projects
-    project_title = re.search(r"Title:\s*([^\n]+)", text, re.IGNORECASE)
-    if project_title:
-        proj = {
-            "title": project_title.group(1).strip(),
-            "description": "Ingested project",
-            "techStack": "",
-            "repoUrl": "",
-            "score": 10.0
-        }
-        desc_match = re.search(r"Description:\s*([^\n]+)", text, re.IGNORECASE)
-        if desc_match:
-            proj["description"] = desc_match.group(1).strip()
-        tech_match = re.search(r"Tech Stack:\s*([^\n]+)", text, re.IGNORECASE)
-        if tech_match:
-            proj["techStack"] = tech_match.group(1).strip()
-        score_match = re.search(r"Score:\s*(\d+)", text, re.IGNORECASE)
-        if score_match:
-            proj["score"] = float(score_match.group(1).strip())
-        data["projects"].append(proj)
-        
-    return data
+    }]
 
 @router.post("/transcript")
 async def ingest_transcript(file: UploadFile = File(...)):
     """
-    Accepts student transcript PDFs, extracts text, calls Gemini API
-    to get structured JSON, and returns the normalized student data.
+    Accepts student marks PDF (single or multi-student internal marksheet),
+    extracts text, and parses structured student records.
     """
     filename = file.filename or ""
     if not filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF transcripts are supported.")
         
     try:
-        # Extract text from PDF
         reader = PdfReader(file.file)
         text_content = ""
         for i, page in enumerate(reader.pages):
@@ -228,88 +319,68 @@ async def ingest_transcript(file: UploadFile = File(...)):
         if not text_content.strip():
             raise HTTPException(status_code=400, detail="No readable text found in PDF transcript.")
 
-        try:
-            # Check if Google AI Studio Gemini API Key is provided
-            gemini_api_key = os.environ.get("GEMINI_API_KEY")
-            
-            if gemini_api_key:
+        parsed_students = []
+        parser_used = "fallback"
+
+        # Attempt Gemini AI extraction if key is present
+        gemini_api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if gemini_api_key:
+            try:
                 import google.generativeai as genai
                 genai.configure(api_key=gemini_api_key)
-                # Use gemini-1.5-flash for structured extraction
                 model = genai.GenerativeModel("gemini-1.5-flash")
-                print("Using Google AI Studio Gemini API for transcript parsing.")
-            else:
-                # Call Gemini API via Vertex AI GenerativeModel (Google Cloud)
-                import vertexai
-                from vertexai.generative_models import GenerativeModel
                 
-                project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or "gen-lang-client-0632178408"
-                location = os.environ.get("GOOGLE_CLOUD_LOCATION") or "us-central1"
+                prompt = f"""
+                You are an AI academic data extractor. Extract ALL students and their internal marks from the text below.
                 
-                vertexai.init(project=project_id, location=location)
+                Transcript Text:
+                {text_content}
                 
-                # Use gemini-1.5-flash for structured extraction
-                model = GenerativeModel("gemini-1.5-flash")
-                print("Using Google Cloud Vertex AI Gemini API for transcript parsing.")
-            
-            prompt = f"""
-            You are an AI assistant that extracts structured academic data from student transcript PDFs.
-            Extract the student demographics, exam marks, verified skills, and projects from the transcript text below.
-            
-            Transcript Text:
-            {text_content}
-            
-            Return the response as a single, valid JSON object conforming exactly to this structure:
-            {{
-              "name": "Student's Full Name (default to 'Unknown Student' if not found)",
-              "email": "Student's Email (or generate a valid email based on name, e.g. name@demo.com)",
-              "class": "e.g. '10' (string, default to '10')",
-              "section": "e.g. 'A' (string, default to 'A')",
-              "gender": "'Male', 'Female', or 'Other' (default to 'Other')",
-              "academicMarks": [
-                 {{ "subject": "Math", "marks": 85.0, "max_marks": 100.0 }}
-              ],
-              "skills": [
-                 {{ "skillName": "Python", "proficiencyLevel": "advanced" }}  // level must be 'beginner', 'intermediate', or 'advanced'
-              ],
-              "projects": [
-                 {{
-                    "title": "E-Commerce",
-                    "description": "Short project summary",
-                    "techStack": "React, Node.js",  // comma-separated list
-                    "repoUrl": "Optional repo url or empty string",
-                    "score": 15.0  // faculty-assigned score out of 20 (number, default to 10.0 if not listed)
-                 }}
-              ]
-            }}
-            
-            Do not include any markdown format (like ```json), explanation, or leading/trailing text. Return ONLY the raw JSON block.
-            """
-            
-            response = model.generate_content(prompt)
-            cleaned_text = response.text.strip()
-            
-            # Clean markdown code block wraps if returned by the model
-            if "```" in cleaned_text:
-                cleaned_text = re.sub(r"```[a-zA-Z]*", "", cleaned_text).strip()
+                Return a valid JSON object matching this schema:
+                {{
+                  "students": [
+                    {{
+                      "studentId": "Roll No or ID",
+                      "name": "Full Student Name",
+                      "email": "name@demo.com",
+                      "class": "10",
+                      "section": "A",
+                      "gender": "Male",
+                      "marks": [
+                         {{ "subject": "Mathematics", "marks": 28.0, "maxMarks": 30.0 }}
+                      ]
+                    }}
+                  ]
+                }}
+                Return ONLY the raw JSON block without markdown formatting.
+                """
                 
-            parsed_json = json.loads(cleaned_text)
-            
-            return {
-                "success": True,
-                "filename": filename,
-                "data": parsed_json,
-                "parser": "gemini"
-            }
-        except Exception as api_err:
-            print(f"Vertex AI failed: {api_err}. Falling back to regex parser...")
-            parsed_json = fallback_parse_transcript(text_content)
-            return {
-                "success": True,
-                "filename": filename,
-                "data": parsed_json,
-                "parser": "fallback"
-            }
+                response = model.generate_content(prompt)
+                cleaned_text = response.text.strip()
+                if "```" in cleaned_text:
+                    cleaned_text = re.sub(r"```[a-zA-Z]*", "", cleaned_text).strip()
+                    
+                parsed_json = json.loads(cleaned_text)
+                if isinstance(parsed_json, dict) and "students" in parsed_json:
+                    parsed_students = parsed_json["students"]
+                elif isinstance(parsed_json, list):
+                    parsed_students = parsed_json
+                elif isinstance(parsed_json, dict):
+                    parsed_students = [parsed_json]
+                parser_used = "gemini"
+            except Exception as gemini_err:
+                print(f"Gemini API parse failed: {gemini_err}. Using smart fallback parser.")
+
+        if not parsed_students:
+            parsed_students = fallback_parse_transcript(text_content)
+
+        return {
+            "success": True,
+            "filename": filename,
+            "data": parsed_students,
+            "studentsCount": len(parsed_students),
+            "parser": parser_used
+        }
             
     except Exception as e:
         print(f"Error parsing PDF transcript: {e}")

@@ -57,7 +57,11 @@ export async function deleteStudentAction(
   try {
     const res = await deleteStudent(id);
     revalidatePath("/dashboard");
+    revalidatePath("/dashboard/admin");
     revalidatePath("/dashboard/admin/students");
+    revalidatePath("/dashboard/admin/marks");
+    revalidatePath("/dashboard/admin/leaderboard");
+    revalidatePath("/dashboard/admin/analytics");
     return { success: true, data: res };
   } catch (error: unknown) {
     console.error("deleteStudentAction error:", error);

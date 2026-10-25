@@ -17,6 +17,7 @@ import {
   ArrowLeft,
   Activity,
   Edit,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -39,7 +40,7 @@ import {
 import * as Dialog from "@radix-ui/react-dialog";
 import { formatDate, getInitials } from "@/lib/utils";
 import type { Student, Mark, Attendance, AiPrediction } from "@/lib/db/schema";
-import { updateStudentAction } from "@/lib/actions/students";
+import { updateStudentAction, deleteStudentAction } from "@/lib/actions/students";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 interface StudentDetailProps {
@@ -81,6 +82,8 @@ export default function StudentDetail({
   // AI Predict loading states
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [editName, setEditName] = useState(student.name);
   const [editClass, setEditClass] = useState(student.class);
   const [editSection, setEditSection] = useState(student.section);
@@ -93,6 +96,27 @@ export default function StudentDetail({
   const showToast = (type: "success" | "error", message: string) => {
     setToast({ type, message });
     setTimeout(() => setToast(null), 4000);
+  };
+
+  const handleDeleteStudent = async () => {
+    setIsDeleting(true);
+    try {
+      const res = await deleteStudentAction(student.id);
+      if (res.success) {
+        showToast("success", `Student ${student.name} deleted successfully.`);
+        setTimeout(() => {
+          router.push("/dashboard/admin/students");
+          router.refresh();
+        }, 800);
+      } else {
+        showToast("error", res.error || "Failed to delete student.");
+        setIsDeleting(false);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to delete student.";
+      showToast("error", msg);
+      setIsDeleting(false);
+    }
   };
 
   // 1. Calculate general stats
@@ -379,13 +403,22 @@ export default function StudentDetail({
         </div>
 
         {role !== "principal" && (
-          <button
-            onClick={() => setIsEditOpen(true)}
-            className="border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl px-4 py-2.5 text-xs font-semibold flex items-center gap-1.5 transition shadow-xs w-fit"
-          >
-            <Edit className="w-4 h-4" />
-            Edit Profile
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsEditOpen(true)}
+              className="border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl px-4 py-2.5 text-xs font-semibold flex items-center gap-1.5 transition shadow-xs w-fit"
+            >
+              <Edit className="w-4 h-4" />
+              Edit Profile
+            </button>
+            <button
+              onClick={() => setIsDeleteOpen(true)}
+              className="border border-rose-200 bg-rose-50/60 hover:bg-rose-100 text-rose-600 rounded-xl px-4 py-2.5 text-xs font-semibold flex items-center gap-1.5 transition shadow-xs w-fit"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete Student
+            </button>
+          </div>
         )}
       </div>
 
@@ -847,6 +880,61 @@ export default function StudentDetail({
                 </button>
               </div>
             </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      {/* Delete Confirmation Modal */}
+      <Dialog.Root open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 animate-in fade-in" />
+          <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-3xl p-6 shadow-2xl border border-slate-150 w-full max-w-md z-50 animate-in zoom-in-95">
+            <div className="flex items-center gap-3.5 mb-4">
+              <div className="w-10 h-10 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 flex-shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <Dialog.Title className="text-base font-bold text-slate-800">
+                  Delete Student Record
+                </Dialog.Title>
+                <Dialog.Description className="text-xs text-slate-400 mt-0.5">
+                  Are you sure you want to delete this student?
+                </Dialog.Description>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 border border-slate-200/60 rounded-xl p-3.5">
+              This will remove <span className="font-bold text-slate-800">{student.name}</span> (Class {student.class}-{student.section}), along with all recorded marks, attendance data, and AI predictions. Class rankings will be recalculated.
+            </p>
+
+            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 mt-6">
+              <button
+                type="button"
+                onClick={() => setIsDeleteOpen(false)}
+                disabled={isDeleting}
+                className="px-4 py-2.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 rounded-xl transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteStudent}
+                disabled={isDeleting}
+                className="bg-rose-600 hover:bg-rose-700 text-white rounded-xl py-2.5 px-5 text-xs font-semibold transition shadow-md shadow-rose-100 flex items-center gap-2"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete Record
+                  </>
+                )}
+              </button>
+            </div>
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

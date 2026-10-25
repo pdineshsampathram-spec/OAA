@@ -263,7 +263,7 @@ export default function StudentsPage({
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.15 }}
             >
-              <StudentGrid students={students} />
+              <StudentGrid students={students} onRefresh={() => router.refresh()} />
             </motion.div>
           ) : (
             <motion.div

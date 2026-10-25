@@ -1,18 +1,18 @@
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 
-const url = process.env.TURSO_DATABASE_URL;
+let rawUrl = process.env.TURSO_DATABASE_URL || "file:dev.db";
 const authToken = process.env.TURSO_AUTH_TOKEN;
 
-if (!url) {
-  // During build time or CI, env vars might be undefined.
-  // Fallback to a mock/in-memory or fail gracefully.
-  console.warn("WARNING: TURSO_DATABASE_URL is not set. Database client might fail if queried.");
+// Convert libsql:// to https:// for standard TLS/HTTP transport to prevent firewall/WebSocket timeouts
+if (rawUrl.startsWith("libsql://")) {
+  rawUrl = rawUrl.replace("libsql://", "https://");
 }
 
 export const tursoClient = createClient({
-  url: url || "libsql://dummy-url-for-build.db",
+  url: rawUrl,
   authToken: authToken || "",
 });
 
 export const db = drizzle(tursoClient);
+

@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 import { getServerSession, ApiError, requireRole } from "@/lib/api/auth-helper";
 import { db } from "@/lib/db";
 import { students, users, marks, skills, projects } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { generateId } from "@/lib/utils";
 import bcrypt from "bcryptjs";
 import { calculateOAAScore, recalculateAllRanks } from "@/lib/scoring/oaaEngine";
+import { generateStudentInsights } from "@/lib/ai/generateInsights";
+import { normalizeSubjectName } from "@/lib/ingest/pdfParser";
 
 export async function POST(request: Request) {
   try {
@@ -14,7 +16,7 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => ({}));
     const records = body.records;
-    
+
     if (!Array.isArray(records)) {
       return NextResponse.json(
         { error: "Invalid request payload. Expected 'records' list.", status: 400 },
@@ -24,13 +26,49 @@ export async function POST(request: Request) {
 
     const schoolId = session.user.schoolId || "school_1";
     let importedCount = 0;
+    let newStudentsCount = 0;
+    let existingStudentsCount = 0;
+    let marksUpdatedCount = 0;
+    let marksInsertedCount = 0;
+    const allProcessedSubjects = new Set<string>();
+
+    // Pre-fetch all active students in this school for fast in-memory matching
+    const existingSchoolStudents = await db
+      .select({
+        id: students.id,
+        name: students.name,
+        class: students.class,
+        section: students.section,
+      })
+      .from(students)
+      .where(and(eq(students.schoolId, schoolId), isNull(students.deletedAt)));
+
+    const processedStudentIds: string[] = [];
 
     for (const record of records) {
-      if (!record.name) continue;
+      if (!record.name && !record.studentId) continue;
 
-      const baseEmail = record.email || `${record.name.toLowerCase().replace(/[^a-z0-9]/g, "")}@demo.com`;
-      
-      // Check if user already exists
+      const rawName = (record.name || `Student ${record.studentId}`).trim();
+      const cleanName = rawName.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+      const baseEmail =
+        record.email?.trim() || `${cleanName || "student" + generateId()}@demo.com`;
+
+      // 1. INTELLIGENT STUDENT MATCHING
+      // Check 1: Match by studentId / Roll number
+      let matchedStudent = record.studentId
+        ? existingSchoolStudents.find(
+            (s) => s.id.toLowerCase() === String(record.studentId).toLowerCase().trim()
+          )
+        : undefined;
+
+      // Check 2: Match by exact or normalized Name in school
+      if (!matchedStudent) {
+        matchedStudent = existingSchoolStudents.find(
+          (s) => s.name.trim().toLowerCase() === rawName.toLowerCase()
+        );
+      }
+
+      // Check 3: Match by user email in users table
       const existingUser = await db
         .select()
         .from(users)
@@ -40,91 +78,155 @@ export async function POST(request: Request) {
       let studentId: string;
       let userId: string;
 
-      if (existingUser.length > 0) {
+      if (matchedStudent) {
+        // MATCHED EXISTING STUDENT
+        studentId = matchedStudent.id;
+        existingStudentsCount++;
+
+        // Update class/section if specified
+        if (record.class || record.section) {
+          await db
+            .update(students)
+            .set({
+              class: record.class || matchedStudent.class,
+              section: record.section || matchedStudent.section,
+            })
+            .where(eq(students.id, studentId));
+        }
+
+        // Link with user record if exists or create one
+        if (existingUser.length > 0) {
+          userId = existingUser[0].id;
+        } else {
+          userId = generateId();
+          const dummyHash = bcrypt.hashSync("google-auth-placeholder-" + Math.random(), 10);
+          await db.insert(users).values({
+            id: userId,
+            name: rawName,
+            email: baseEmail,
+            passwordHash: dummyHash,
+            role: "student",
+            schoolId,
+            studentId,
+          });
+        }
+      } else if (existingUser.length > 0) {
+        // User exists by email
         userId = existingUser[0].id;
         studentId = existingUser[0].studentId || `student_${generateId()}`;
-        
-        // Update user
-        await db
-          .update(users)
-          .set({ name: record.name, studentId })
-          .where(eq(users.id, userId));
-          
-        // Update student
+        existingStudentsCount++;
+
         await db
           .update(students)
           .set({
-            name: record.name,
+            name: rawName,
             class: record.class || "10",
             section: record.section || "A",
             gender: record.gender || "Other",
           })
           .where(eq(students.id, studentId));
       } else {
+        // COMPLETELY NEW REAL STUDENT (e.g. real students from uploaded PDF)
+        newStudentsCount++;
         userId = generateId();
-        studentId = record.studentId || `student_${generateId()}`;
+        studentId = record.studentId
+          ? String(record.studentId).trim()
+          : `student_${generateId()}`;
+
         const dummyHash = bcrypt.hashSync("google-auth-placeholder-" + Math.random(), 10);
 
-        // 1. Create student
+        // Insert student
         await db.insert(students).values({
           id: studentId,
-          name: record.name,
+          name: rawName,
           class: record.class || "10",
           section: record.section || "A",
           gender: record.gender || "Other",
           schoolId,
         });
 
-        // 2. Create user
+        // Insert user
         await db.insert(users).values({
           id: userId,
-          name: record.name,
+          name: rawName,
           email: baseEmail,
           passwordHash: dummyHash,
           role: "student",
           schoolId,
           studentId,
         });
+
+        // Add to in-memory list for subsequent records in the same batch
+        existingSchoolStudents.push({
+          id: studentId,
+          name: rawName,
+          class: record.class || "10",
+          section: record.section || "A",
+        });
       }
 
-      // Clear existing marks to avoid duplication
-      await db.delete(marks).where(eq(marks.studentId, studentId));
+      processedStudentIds.push(studentId);
 
-      // 3. Insert academic marks
-      if (Array.isArray(record.marks)) {
-        for (const m of record.marks) {
-          if (!m.subject || m.marks === undefined) continue;
+      // 2. INTELLIGENT SUBJECT IDENTIFICATION & MARKS UPDATE VS INSERT
+      // Fetch this student's currently entered marks to detect if subject already exists
+      const currentMarks = await db
+        .select()
+        .from(marks)
+        .where(eq(marks.studentId, studentId));
+
+      const incomingMarks = Array.isArray(record.marks)
+        ? record.marks
+        : Array.isArray(record.academicMarks)
+        ? record.academicMarks
+        : [];
+
+      for (const m of incomingMarks) {
+        if (!m.subject || m.marks === undefined || m.marks === null) continue;
+
+        const normalizedSubject = normalizeSubjectName(String(m.subject));
+        allProcessedSubjects.add(normalizedSubject);
+
+        const score = Number(m.marks);
+        const maxMarks = Number(m.maxMarks || m.max_marks || 100.0);
+        const examType = m.examType || "midterm";
+
+        // Check if subject data was already entered for this student
+        const existingMark = currentMarks.find(
+          (cm) => cm.subject.trim().toLowerCase() === normalizedSubject.toLowerCase()
+        );
+
+        if (existingMark) {
+          // Subject was ALREADY ENTERED: UPDATE with real-time internal data
+          await db
+            .update(marks)
+            .set({
+              marks: score,
+              maxMarks,
+              examType,
+              recordedBy: session.user.id,
+              createdAt: new Date().toISOString(),
+            })
+            .where(eq(marks.id, existingMark.id));
+          marksUpdatedCount++;
+        } else {
+          // NEW SUBJECT: INSERT real-time data
           await db.insert(marks).values({
             id: `mark_${generateId()}`,
             studentId,
-            subject: m.subject,
-            examType: "final",
-            marks: Number(m.marks),
-            maxMarks: Number(m.maxMarks || 100.0),
+            subject: normalizedSubject,
+            examType,
+            marks: score,
+            maxMarks,
             recordedBy: session.user.id,
           });
-        }
-      } else if (Array.isArray(record.academicMarks)) {
-        // PDF transcript returns keys as academicMarks
-        for (const m of record.academicMarks) {
-          if (!m.subject || m.marks === undefined) continue;
-          await db.insert(marks).values({
-            id: `mark_${generateId()}`,
-            studentId,
-            subject: m.subject,
-            examType: "final",
-            marks: Number(m.marks),
-            maxMarks: Number(m.max_marks || 100.0),
-            recordedBy: session.user.id,
-          });
+          marksInsertedCount++;
         }
       }
 
-      // 4. Insert skills
-      const targetSkills = record.skills || [];
-      if (Array.isArray(targetSkills)) {
+      // 3. SKILLS & PROJECTS (if present in transcript)
+      if (Array.isArray(record.skills) && record.skills.length > 0) {
         await db.delete(skills).where(eq(skills.studentId, studentId));
-        for (const s of targetSkills) {
+        for (const s of record.skills) {
           if (!s.skillName) continue;
           await db.insert(skills).values({
             id: `skill_${generateId()}`,
@@ -136,11 +238,9 @@ export async function POST(request: Request) {
         }
       }
 
-      // 5. Insert projects
-      const targetProjects = record.projects || [];
-      if (Array.isArray(targetProjects)) {
+      if (Array.isArray(record.projects) && record.projects.length > 0) {
         await db.delete(projects).where(eq(projects.studentId, studentId));
-        for (const p of targetProjects) {
+        for (const p of record.projects) {
           if (!p.title) continue;
           await db.insert(projects).values({
             id: `proj_${generateId()}`,
@@ -154,15 +254,32 @@ export async function POST(request: Request) {
         }
       }
 
-      // 6. Recalculate OAA score for student
+      // 4. RECALCULATE OAA SCORE FOR STUDENT
       await calculateOAAScore(studentId);
+
+      // 5. AUTOMATICALLY GENERATE & UPDATE AI INSIGHTS
+      try {
+        await generateStudentInsights(studentId);
+      } catch (aiErr) {
+        console.warn(`Failed to generate AI insights for ${studentId}:`, aiErr);
+      }
+
       importedCount++;
     }
 
-    // 7. Recalculate ranks across the whole school
+    // 6. RECALCULATE ALL RANKS ACROSS THE WHOLE SCHOOL / DEPARTMENT
     await recalculateAllRanks(schoolId);
 
-    return NextResponse.json({ success: true, count: importedCount, error: null });
+    return NextResponse.json({
+      success: true,
+      count: importedCount,
+      newStudentsCount,
+      existingStudentsCount,
+      marksUpdatedCount,
+      marksInsertedCount,
+      subjectsIdentified: Array.from(allProcessedSubjects),
+      error: null,
+    });
   } catch (error: unknown) {
     console.error("Ingestion confirm API error:", error);
     const message = error instanceof Error ? error.message : "Internal Server Error";
@@ -170,3 +287,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message, status }, { status });
   }
 }
+

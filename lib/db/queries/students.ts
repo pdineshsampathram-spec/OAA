@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { students, marks, attendance, aiPredictions } from "@/lib/db/schema";
+import { students, marks, attendance, aiPredictions, oaaScores, users } from "@/lib/db/schema";
 import { eq, and, like, desc, count, avg, isNull, sql } from "drizzle-orm";
 import type { Student, NewStudent, Mark, Attendance, AiPrediction } from "@/lib/db/schema";
 
@@ -303,14 +303,64 @@ export async function updateStudent(id: string, data: Partial<NewStudent>): Prom
 }
 
 /**
- * Delete a student.
+ * Delete a student: removes child records, marks student as deleted, and recalculates class rankings.
  */
 export async function deleteStudent(id: string): Promise<boolean> {
+  // Fetch existing student info to get schoolId
+  const existing = await db
+    .select({ schoolId: students.schoolId })
+    .from(students)
+    .where(eq(students.id, id))
+    .limit(1);
+
+  if (existing.length === 0) return false;
+  const schoolId = existing[0]?.schoolId || "school_1";
+
+  // Clean up dependent records
+  try {
+    await db.delete(marks).where(eq(marks.studentId, id));
+  } catch (err) {
+    console.warn("Could not delete student marks:", err);
+  }
+
+  try {
+    await db.delete(attendance).where(eq(attendance.studentId, id));
+  } catch (err) {
+    console.warn("Could not delete student attendance:", err);
+  }
+
+  try {
+    await db.delete(aiPredictions).where(eq(aiPredictions.studentId, id));
+  } catch (err) {
+    console.warn("Could not delete student aiPredictions:", err);
+  }
+
+  try {
+    await db.delete(oaaScores).where(eq(oaaScores.studentId, id));
+  } catch (err) {
+    console.warn("Could not delete student oaaScores:", err);
+  }
+
+  try {
+    await db.update(users).set({ studentId: null }).where(eq(users.studentId, id));
+  } catch (err) {
+    console.warn("Could not unlink user studentId:", err);
+  }
+
   const res = await db
     .update(students)
     .set({ deletedAt: new Date().toISOString() })
     .where(eq(students.id, id))
     .returning();
+
+  // Recalculate ranks for remaining students
+  try {
+    const { recalculateAllRanks } = await import("@/lib/scoring/oaaEngine");
+    await recalculateAllRanks(schoolId);
+  } catch (err) {
+    console.warn("Could not recalculate ranks after deletion:", err);
+  }
+
   return res.length > 0;
 }
 
